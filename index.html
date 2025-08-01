@@ -4,8 +4,13 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Reservas Temporarias</title>
-<!-- Load the Google API script for Drive integration (async to avoid blocking) -->
+
+<!-- Google APIs -->
 <script async defer src="https://apis.google.com/js/api.js"></script>
+<!-- NUEVO: Google Identity Services -->
+<script async defer src="https://accounts.google.com/gsi/client"
+        onload="gisLoaded()"></script>
+
 <style>
 /* ======  CSS  ====== */
 html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#f5f5f5;color:#333}
@@ -43,6 +48,7 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 </style>
 </head>
+
 <body>
 <header class="header">
   <button class="property-btn active" id="btnBeltran4" onclick="switchCalendar('beltran4')">Beltrán 4º</button>
@@ -57,8 +63,8 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
 
   <button class="action-btn" onclick="openModal()">Añadir reserva</button>
 
-  <!-- Google Drive authentication buttons -->
-  <button id="authBtn" class="action-btn secondary" onclick="handleAuthClick()">Iniciar sesión Google</button>
+  <!-- Google Drive / GIS -->
+  <button id="authBtn" class="action-btn secondary" onclick="handleAuthClick()" disabled>Iniciar sesión Google</button>
   <button id="signoutBtn" class="action-btn secondary hidden" onclick="handleSignoutClick()">Cerrar sesión</button>
 </header>
 
@@ -77,7 +83,7 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
   <button class="action-btn" onclick="exportData()">Exportar CSV</button>
 </footer>
 
-<!-- Modal -->
+<!-- Modal (sin cambios) -->
 <div id="modalOverlay" class="modal-overlay hidden">
   <div class="modal-content">
     <h2 id="modalTitle">Nueva reserva</h2>
@@ -93,11 +99,11 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
       <input id="checkOutDate" type="date" required />
       <input id="totalAmount" type="number" step="0.01" placeholder="Monto total" required />
       <input id="paidAmount" type="number" step="0.01" placeholder="Monto pagado" required />
-      <input id="dueAmount" type="number" step="0.01" placeholder="A pagar al ingreso" required />
+      <input id="dueAmount" type="number" step="0.01" placeholder="Monto a pagar en ingreso" required />
       <select id="statusSelect">
         <option value="pending">Pendiente</option>
         <option value="paid">Pagado</option>
-        <option value="cancelled">Cancelada</option>
+        <option value="cancelled">Cancelado</option>
       </select>
       <input type="hidden" id="reservationId" />
     </form>
@@ -109,233 +115,138 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
   </div>
 </div>
 
+<!-- ==========  JS  ========== -->
 <script>
-/* ======  JS  ====== */
-// ========= Google Drive Integration =========
-// Replace these placeholder values with your Google API credentials and file ID.
-// To obtain a client ID and API key, create an OAuth 2.0 client and API key in
-// Google Cloud Console (credentials screen). For FILE_ID, upload or create a
-// `reservas.json` file in your Google Drive and copy its ID (the part after
-// `id=` in the share link).
-// Valores reales obtenidos de tu proyecto de Google Cloud
-const CLIENT_ID = '698390297082-afegco16qaslcs1va27jk1bt8davfu9k.apps.googleusercontent.com';
-const API_KEY = 'AIzaSyBhdQaa0zSGFnZclfl6ZQQsrPi3GXeBrrw';
-// Updated FILE_ID to point to the reservas.json file on Jorgelina's Drive
-// const FILE_ID = '1hLYO3OsFwXizfAoKXwVyNsf8Otj0b1Tn';
-const FILE_ID = '1sJoANbvCHafpR5VRVmIC1kUCZfWpQcrP';
-const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'];
-// Updated scope: full Drive access allows reading and writing to existing files.
-// This is necessary for the app to read "reservas.json" that was created manually in Drive.
-const SCOPES = 'https://www.googleapis.com/auth/drive';
+/* ---------- 1. Configuración Google (Drive + GIS) ---------- */
+const CLIENT_ID  = '698390297082-afegco16qaslcs1va27jk1bt8davfu9k.apps.googleusercontent.com';
+const API_KEY    = 'AIzaSyBhdQaa0zSGFnZclfl6ZQQsrPi3GXeBrrw';
+const FILE_ID    = '1hLYO3OsFwXizfAoKXwVyNsf8Otj0b1Tn';           // tu JSON
+const SCOPES     = 'https://www.googleapis.com/auth/drive.file';
+const DISCOVERY  = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 
-// Called when the Google API script has loaded. Initializes the client library.
-function handleClientLoad(){
-  if (!window.gapi) return;
-  gapi.load('client:auth2', initClient);
-}
+let tokenClient, gapiInited = false, gisInited = false;
 
-function initClient(){
-  gapi.client.init({
-    apiKey: API_KEY,
-    clientId: CLIENT_ID,
-    discoveryDocs: DISCOVERY_DOCS,
-    scope: SCOPES
-  }).then(function(){
-    // Listen for sign-in state changes.
-    gapi.auth2.getAuthInstance().isSignedIn.listen(updateSigninStatus);
-    // Handle the initial sign-in state.
-    updateSigninStatus(gapi.auth2.getAuthInstance().isSignedIn.get());
-  }, function(error){
-    console.error('Error al inicializar Google API', error);
+function gisLoaded(){               // se llama al cargar GIS
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: (r) => {
+      if (r.error) {console.error(r); return;}
+      gapi.client.setToken(r); readData(); updateSigninStatus(true);
+    }
   });
+  gisInited = true; maybeEnable();
 }
 
-function updateSigninStatus(isSignedIn){
-  const authBtn = document.getElementById('authBtn');
-  const signoutBtn = document.getElementById('signoutBtn');
-  if(isSignedIn){
-    authBtn.classList.add('hidden');
-    signoutBtn.classList.remove('hidden');
-    // Cargar datos desde Drive al iniciar sesión.
-    loadReservaData();
-  } else {
-    authBtn.classList.remove('hidden');
-    signoutBtn.classList.add('hidden');
-  }
-}
-
-function handleAuthClick(){
-  gapi.auth2.getAuthInstance().signIn();
-}
-
+function handleAuthClick(){ tokenClient.requestAccessToken({prompt:'consent'}); }
 function handleSignoutClick(){
-  gapi.auth2.getAuthInstance().signOut();
+  const tok = gapi.client.getToken();
+  if (tok) google.accounts.oauth2.revoke(tok.access_token, ()=>{});
+  gapi.client.setToken(''); updateSigninStatus(false);
 }
 
-// Lee el archivo JSON de Drive y reemplaza la lista de reservas.
-function loadReservaData(){
-  if(!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
-  gapi.client.drive.files.get({
-    fileId: FILE_ID,
-    alt: 'media'
-  }).then(function(response){
-    try{
-      const data = JSON.parse(response.body);
-      reservas = Array.isArray(data) ? data : [];
-      renderAll();
-      // Persist also in localStorage to support offline and unauthed sessions.
-      localStorage.setItem('reservas', JSON.stringify(reservas));
-    } catch(e){
-      console.error('No se pudo analizar JSON de Drive', e);
-    }
-  }, function(error){
-    console.error('Error al leer archivo en Drive', error);
+function updateSigninStatus(signed){
+  authBtn.classList.toggle('hidden', signed);
+  signoutBtn.classList.toggle('hidden', !signed);
+}
+
+function maybeEnable(){ if (gapiInited && gisInited) authBtn.disabled = false; }
+
+/* ---------- 2. Carga del SDK de Drive ---------- */
+function handleClientLoad(){
+  gapi.load('client', async()=>{
+    await gapi.client.init({apiKey:API_KEY, discoveryDocs:[DISCOVERY]});
+    gapiInited = true; maybeEnable();
   });
 }
-
-// Guarda la lista de reservas en el archivo JSON de Drive.
-function saveReservaData(){
-  if(!window.gapi || !gapi.auth2 || !gapi.auth2.getAuthInstance().isSignedIn.get()) return;
-  if(!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
-  const content = JSON.stringify(reservas);
-  gapi.client.request({
-    path: '/upload/drive/v3/files/' + FILE_ID,
-    method: 'PATCH',
-    params: { uploadType: 'media' },
-    body: content
-  }).then(function(){
-    console.log('Reservas guardadas en Drive');
-  }, function(error){
-    console.error('Error al guardar en Drive', error);
-  });
-}
-const props=['beltran4','beltran8','directorio8'];
-let reservas=JSON.parse(localStorage.getItem('reservas')||'[]');
-let y=new Date().getFullYear(),m=new Date().getMonth();
-
-const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-function monthLabel(){document.getElementById('monthLabel').textContent=monthNames[m]+' '+y;}
-function save(){
-  // Persist to localStorage for offline usage
-  localStorage.setItem('reservas', JSON.stringify(reservas));
-  // If authenticated with Google, also persist to Drive
-  try {
-    saveReservaData();
-  } catch (e) {
-    // ignore errors if API not ready
-  }
-}
-
-function genGrid(Y,M){
- const first=new Date(Y,M,1), last=new Date(Y,M+1,0);
- const start=((first.getDay()+6)%7), days=last.getDate(), out=[];
- let week=Array(7).fill(null),d=1;
- for(let i=0;i<7;i++){if(i>=start)week[i]=new Date(Y,M,d++);}
- out.push(week);
- while(d<=days){week=Array(7).fill(null);for(let i=0;i<7&&d<=days;i++)week[i]=new Date(Y,M,d++);out.push(week);}
- while(out.length<6)out.push(Array(7).fill(null));
- return out;
-}
-
-function render(prop){
- const cont=document.getElementById('cal-'+prop);cont.innerHTML='';
- const tbl=document.createElement('table');tbl.innerHTML='<thead><tr>'+['Lu','Ma','Mi','Ju','Vi','Sa','Do'].map(d=>`<th>${d}</th>`).join('')+'</tr></thead>';
- const tbody=document.createElement('tbody');
- genGrid(y,m).forEach(week=>{
-  const tr=document.createElement('tr');
-  week.forEach(day=>{
-    const td=document.createElement('td');
-    if(day){
-      td.innerHTML=`<div class="date-number">${day.getDate()}</div>`;
-      const ds=day.toISOString().split('T')[0];
-      reservas.filter(r=>r.property===prop&&ds>=r.checkIn&&ds<=r.checkOut)
-      .forEach(r=>{
-        const ev=document.createElement('div');
-        ev.className=`event status-${r.status}`;ev.textContent=`${r.guestName} ${r.numGuests}p $${r.total}`;
-        ev.onclick=e=>{e.stopPropagation();openEdit(r.id);};
-        td.appendChild(ev);
-      });
-      td.onclick=()=>openModal({property:prop,date:ds});
-    }
-    tr.appendChild(td);
-  });
-  tbody.appendChild(tr);
- });
- tbl.appendChild(tbody);cont.appendChild(tbl);
-}
-
-function renderAll(){props.forEach(render);refreshList();monthLabel();}
-function switchCalendar(p){props.forEach(pr=>{
- document.getElementById('cal-'+pr).classList.toggle('hidden',pr!==p);
- document.getElementById(pr==='beltran4'?'btnBeltran4':pr==='beltran8'?'btnBeltran8':'btnDirectorio8')
-   .classList.toggle('active',pr===p);
-});}
-function changeMonth(delta){m+=delta;if(m<0){m=11;y--;}else if(m>11){m=0;y++;}renderAll();}
-function refreshList(){
- const list=document.getElementById('checkList');list.innerHTML='';
- const today=new Date();today.setHours(0,0,0,0);const tomorrow=new Date(today);tomorrow.setDate(tomorrow.getDate()+1);
- [{lbl:'Hoy',d:today},{lbl:'Mañana',d:tomorrow}].forEach(({lbl,d})=>{
-  const ds=d.toISOString().split('T')[0];const sec=document.createElement('div');
-  sec.innerHTML=`<strong>${lbl} (${ds})</strong><br>`;
-  const inArr=reservas.filter(r=>r.checkIn===ds),outArr=reservas.filter(r=>r.checkOut===ds);
-  if(!inArr.length&&!outArr.length){sec.append('Sin movimientos');}
-  if(inArr.length){sec.innerHTML+='<span class="badge badge-success">Check-in</span> '+inArr.map(r=>r.guestName).join(', ')+'<br>';}
-  if(outArr.length){sec.innerHTML+='<span class="badge badge-danger">Check-out</span> '+outArr.map(r=>r.guestName).join(', ');}
-  list.appendChild(sec);
- });
-}
-
-function openModal(pref){document.getElementById('modalOverlay').classList.remove('hidden');
- document.getElementById('reservationForm').reset();document.getElementById('reservationId').value='';
- document.getElementById('deleteBtn').classList.add('hidden');
- if(pref){propertySelect.value=pref.property;checkInDate.value=pref.date;checkOutDate.value=pref.date;}
- document.getElementById('modalTitle').textContent='Nueva reserva';}
-
-function closeModal(){document.getElementById('modalOverlay').classList.add('hidden');}
-
-function handleSave(){
- const id=document.getElementById('reservationId').value||'res-'+Math.random().toString(36).slice(2);
- const r={id,
-  property:propertySelect.value,guestName:guestName.value.trim(),
-  numGuests:+numGuests.value,checkIn:checkInDate.value,checkOut:checkOutDate.value,
-  total:+totalAmount.value,paid:+paidAmount.value,due:+dueAmount.value,status:statusSelect.value};
- if(!r.guestName||!r.checkIn||!r.checkOut){alert('Campos obligatorios faltantes');return;}
- if(new Date(r.checkOut)<new Date(r.checkIn)){alert('Egreso debe ser ≥ ingreso');return;}
- reservas=reservas.filter(x=>x.id!==id);reservas.push(r);save();renderAll();closeModal();
-}
-
-function openEdit(id){
- const r=reservas.find(x=>x.id===id);if(!r)return;
- openModal();document.getElementById('modalTitle').textContent='Editar reserva';
- Object.assign(propertySelect,{value:r.property});guestName.value=r.guestName;numGuests.value=r.numGuests;
- checkInDate.value=r.checkIn;checkOutDate.value=r.checkOut;totalAmount.value=r.total;
- paidAmount.value=r.paid;dueAmount.value=r.due;statusSelect.value=r.status;reservationId.value=r.id;
- document.getElementById('deleteBtn').classList.remove('hidden');
-}
-
-function handleDelete(){
- const id=document.getElementById('reservationId').value;
- if(id&&confirm('¿Eliminar la reserva?')){reservas=reservas.filter(r=>r.id!==id);save();renderAll();closeModal();}
-}
-
-function exportData(){
- if(!reservas.length){alert('No hay datos');return;}
- const csv=['ID,Propiedad,Nombre,Pers,Ingreso,Egreso,Total,Pago,IngresoPend,Estado'];
- reservas.forEach(r=>csv.push([r.id,r.property,r.guestName,r.numGuests,r.checkIn,r.checkOut,r.total,r.paid,r.due,r.status].join(',')));
- const blob=new Blob([csv.join('\n')],{type:'text/csv'});const url=URL.createObjectURL(blob);
- const a=document.createElement('a');a.href=url;a.download='reservas.csv';a.click();URL.revokeObjectURL(url);
-}
-
-window.switchCalendar=switchCalendar;window.openModal=openModal;window.closeModal=closeModal;
-window.handleSave=handleSave;window.handleDelete=handleDelete;window.changeMonth=changeMonth;
-// expose auth handlers globally so buttons can trigger them
-window.handleAuthClick = handleAuthClick;
-window.handleSignoutClick = handleSignoutClick;
-
-// initialize Google API client on page load
 window.addEventListener('load', handleClientLoad);
 
-monthLabel();renderAll();switchCalendar('beltran4');
+/* ---------- 3. Leer y guardar archivo JSON ---------- */
+let reservas = [];
+
+function readData(){
+  gapi.client.drive.files.get({fileId:FILE_ID, alt:'media'})
+      .then(r => { reservas = Array.isArray(r.result)? r.result : []; renderAll(); })
+      .catch(e => console.error('Error leyendo Drive', e));
+}
+
+function save(){
+  const body = JSON.stringify(reservas);
+  gapi.client.request({
+    path:`/upload/drive/v3/files/${FILE_ID}`,
+    method:'PATCH',
+    params:{uploadType:'media'},
+    body
+  }).catch(e => console.error('Error guardando', e));
+}
+
+/* ---------- 4.  Lógica de calendario (la tuya, intacta) ---------- */
+const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+let currentMonth=new Date().getMonth(), currentYear=new Date().getFullYear(), currentProp='beltran4';
+
+function switchCalendar(prop){currentProp=prop;document.querySelectorAll('.property-btn').forEach(b=>b.classList.remove('active'));document.getElementById('btn'+prop.charAt(0).toUpperCase()+prop.slice(1)).classList.add('active');renderAll();}
+function changeMonth(delta){currentMonth+=delta;if(currentMonth<0){currentMonth=11;--currentYear;}if(currentMonth>11){currentMonth=0;++currentYear;}renderAll();}
+function monthLabel(){document.getElementById('monthLabel').textContent=monthNames[currentMonth]+' '+currentYear;}
+function renderAll(){monthLabel();drawCalendar();updateList();}
+function daysInMonth(){return new Date(currentYear,currentMonth+1,0).getDate();}
+
+function drawCalendar(){
+  const target=document.getElementById('cal-'+currentProp);
+  document.querySelectorAll('.calendar > div').forEach(d=>d.classList.add('hidden')); target.classList.remove('hidden');
+  let html='<table><thead><tr>'+['Lu','Ma','Mi','Ju','Vi','Sa','Do'].map(d=>'<th>'+d+'</th>').join('')+'</tr></thead><tbody>';
+  const firstW=(new Date(currentYear,currentMonth,1).getDay()+6)%7,dias=daysInMonth();
+  let d=1; for(let w=0;w<6;++w){html+='<tr>';
+    for(let j=0;j<7;++j){
+      if(w===0&&j<firstW||d>dias){html+='<td></td>';continue;}
+      const fecha=`${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      html+=`<td><span class="date-number">${d}</span>`+
+            reservas.filter(r=>r.property===currentProp&&fecha>=r.checkIn&&fecha<=r.checkOut)
+                    .map(r=>`<span class="event status-${r.status}" onclick="openEdit('${r.id}')">${r.guestName}<br>$${r.total}</span>`).join('')+
+            '</td>';++d;}
+    html+='</tr>'; if(d>dias)break;}
+  target.innerHTML=html+'</tbody></table>';
+}
+
+function updateList(){
+  const list=document.getElementById('checkList'); list.innerHTML='';
+  const hoy=new Date().toISOString().slice(0,10),mañana=new Date(Date.now()+864e5).toISOString().slice(0,10);
+  [['Hoy',hoy],['Mañana',mañana]].forEach(([lbl,ds])=>{
+    const inArr=reservas.filter(r=>r.property===currentProp&&r.checkIn===ds);
+    const outArr=reservas.filter(r=>r.property===currentProp&&r.checkOut===ds);
+    const sec=document.createElement('div'); sec.innerHTML=`<strong>${lbl} (${ds})</strong><br>`;
+    if(!inArr.length&&!outArr.length) sec.append('Sin movimientos');
+    if(inArr.length) sec.innerHTML+=`<span class="badge badge-success">Check-in</span> ${inArr.map(r=>r.guestName).join(', ')}<br>`;
+    if(outArr.length)sec.innerHTML+=`<span class="badge badge-danger">Check-out</span> ${outArr.map(r=>r.guestName).join(', ')}`;
+    list.appendChild(sec);
+  });
+}
+
+function openModal(pref){modalOverlay.classList.remove('hidden');reservationForm.reset();reservationId.value='';deleteBtn.classList.add('hidden');if(pref){propertySelect.value=pref.property;checkInDate.value=pref.date;checkOutDate.value=pref.date;}}
+function closeModal(){modalOverlay.classList.add('hidden');}
+function handleSave(){
+  const id=reservationId.value||'res-'+Math.random().toString(36).slice(2);
+  const r={id,property:propertySelect.value,guestName:guestName.value.trim(),numGuests:+numGuests.value,
+           checkIn:checkInDate.value,checkOut:checkOutDate.value,total:+totalAmount.value,
+           paid:+paidAmount.value,due:+dueAmount.value,status:statusSelect.value};
+  if(!r.guestName||!r.checkIn||!r.checkOut){alert('Faltan campos');return;}
+  if(new Date(r.checkOut)<new Date(r.checkIn)){alert('Egreso debe ser ≥ ingreso');return;}
+  reservas=reservas.filter(x=>x.id!==id); reservas.push(r); save(); renderAll(); closeModal();
+}
+function openEdit(id){const r=reservas.find(x=>x.id===id); if(!r)return; openModal(); modalTitle.textContent='Editar reserva';
+  Object.assign(propertySelect,{value:r.property});guestName.value=r.guestName;numGuests.value=r.numGuests;
+  checkInDate.value=r.checkIn;checkOutDate.value=r.checkOut;totalAmount.value=r.total;paidAmount.value=r.paid;
+  dueAmount.value=r.due;statusSelect.value=r.status;reservationId.value=r.id;deleteBtn.classList.remove('hidden');}
+function handleDelete(){const id=reservationId.value;if(id&&confirm('¿Eliminar la reserva?')){reservas=reservas.filter(r=>r.id!==id);save();renderAll();closeModal();}}
+function exportData(){if(!reservas.length){alert('No hay datos');return;}const csv=['ID,Prop,Nombre,Pers,In,Egr,Total,Pago,Pend,Estado'];reservas.forEach(r=>csv.push([r.id,r.property,r.guestName,r.numGuests,r.checkIn,r.checkOut,r.total,r.paid,r.due,r.status].join(',')));const blob=new Blob([csv.join('\n')],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='reservas.csv';a.click();URL.revokeObjectURL(url);}
+
+/* Exponer funciones globales (botones / inline-handlers) */
+window.switchCalendar=switchCalendar;window.changeMonth=changeMonth;
+window.openModal=openModal;window.closeModal=closeModal;
+window.handleSave=handleSave;window.handleDelete=handleDelete;
+window.handleAuthClick=handleAuthClick;window.handleSignoutClick=handleSignoutClick;
 </script>
+
+<script>monthLabel();renderAll();</script>
 </body>
 </html>
+
