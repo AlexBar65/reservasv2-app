@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Reservas Temporarias</title>
-<!-- Load the Google API script for Drive integration (async to avoid blocking) -->
 <script async defer src="https://apis.google.com/js/api.js"></script>
 <style>
 /* ======  CSS  ====== */
@@ -57,7 +56,6 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
 
   <button class="action-btn" onclick="openModal()">Añadir reserva</button>
 
-  <!-- Google Drive authentication buttons -->
   <button id="authBtn" class="action-btn secondary" onclick="handleAuthClick()">Iniciar sesión Google</button>
   <button id="signoutBtn" class="action-btn secondary hidden" onclick="handleSignoutClick()">Cerrar sesión</button>
 </header>
@@ -77,7 +75,6 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
   <button class="action-btn" onclick="exportData()">Exportar CSV</button>
 </footer>
 
-<!-- Modal -->
 <div id="modalOverlay" class="modal-overlay hidden">
   <div class="modal-content">
     <h2 id="modalTitle">Nueva reserva</h2>
@@ -112,51 +109,48 @@ th:nth-child(7){background:#cc8bc7;color:#fff}
 <script>
 /* ======  JS  ====== */
 // ========= Google Drive Integration =========
-// Replace these placeholder values with your Google API credentials and file ID.
-// To obtain a client ID and API key, create an OAuth 2.0 client and API key in
-// Google Cloud Console (credentials screen). For FILE_ID, upload or create a
-// `reservas.json` file in your Google Drive and copy its ID (the part after
-// `id=` in the share link).
-// Valores reales obtenidos de tu proyecto de Google Cloud
 const CLIENT_ID = '698390297082-afegco16qaslcs1va27jk1bt8davfu9k.apps.googleusercontent.com';
 const API_KEY = 'AIzaSyBhdQaa0zSGFnZclfl6ZQQsrPi3GXeBrrw';
-// Updated FILE_ID to point to the reservas.json file on Jorgelina's Drive
-// const FILE_ID = '1hLYO3OsFwXizfAoKXwVyNsf8Otj0b1Tn';
 const FILE_ID = '1sJoANbvCHafpR5VRVmIC1kUCZfWpQcrP';
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'];
-// Updated scope: full Drive access allows reading and writing to existing files.
-// This is necessary for the app to read "reservas.json" that was created manually in Drive.
 const SCOPES = 'https://www.googleapis.com/auth/drive';
 
-// Called when the Google API script has loaded. Initializes the client library.
-function handleClientLoad(){
-  if (!window.gapi) return;
+// --- INICIO DE CÓDIGO MODIFICADO ---
+
+// Función para inicializar el cliente de la API de Google
+function handleClientLoad() {
+  if (!window.gapi) {
+    console.error("La API de Google no se ha cargado.");
+    return;
+  }
   gapi.load('client:auth2', initClient);
 }
 
-function initClient(){
+function initClient() {
   gapi.client.init({
     apiKey: API_KEY,
     clientId: CLIENT_ID,
     discoveryDocs: DISCOVERY_DOCS,
     scope: SCOPES
-  }).then(function(){
-    // Listen for sign-in state changes.
+  }).then(function() {
+    // Escuchar cambios en el estado de inicio de sesión
     gapi.auth2.getAuthInstance().isSignedIn.listen(updateSigninStatus);
-    // Handle the initial sign-in state.
+    // Manejar el estado de inicio de sesión inicial
     updateSigninStatus(gapi.auth2.getAuthInstance().isSignedIn.get());
-  }, function(error){
-    console.error('Error al inicializar Google API', error);
+  }, function(error) {
+    console.error('Error al inicializar el cliente de Google API', error);
+    // Informar al usuario que la integración con Drive falló
+    alert('No se pudo conectar con Google Drive. La funcionalidad de guardado en la nube está desactivada.');
   });
 }
 
-function updateSigninStatus(isSignedIn){
+function updateSigninStatus(isSignedIn) {
   const authBtn = document.getElementById('authBtn');
   const signoutBtn = document.getElementById('signoutBtn');
-  if(isSignedIn){
+  if (isSignedIn) {
     authBtn.classList.add('hidden');
     signoutBtn.classList.remove('hidden');
-    // Cargar datos desde Drive al iniciar sesión.
+    // Cargar datos desde Drive al iniciar sesión
     loadReservaData();
   } else {
     authBtn.classList.remove('hidden');
@@ -164,178 +158,228 @@ function updateSigninStatus(isSignedIn){
   }
 }
 
-function handleAuthClick(){
+function handleAuthClick() {
   gapi.auth2.getAuthInstance().signIn();
 }
 
-function handleSignoutClick(){
+function handleSignoutClick() {
   gapi.auth2.getAuthInstance().signOut();
 }
 
-// Lee el archivo JSON de Drive y reemplaza la lista de reservas.
-function loadReservaData(){
-  if(!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
+// Lee el archivo JSON de Drive y reemplaza la lista de reservas
+function loadReservaData() {
+  if (!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
+  
+  // Asegurarse de que el cliente de la API de Drive esté listo
+  if (!gapi.client.drive) {
+    console.error("El cliente de la API de Drive no está listo.");
+    // Podríamos reintentar después de un breve retraso
+    // setTimeout(loadReservaData, 1000); 
+    return;
+  }
+
   gapi.client.drive.files.get({
     fileId: FILE_ID,
     alt: 'media'
-  }).then(function(response){
-    try{
+  }).then(function(response) {
+    try {
       const data = JSON.parse(response.body);
       reservas = Array.isArray(data) ? data : [];
       renderAll();
-      // Persist also in localStorage to support offline and unauthed sessions.
+      // Persistir también en localStorage para soportar sesiones sin conexión
       localStorage.setItem('reservas', JSON.stringify(reservas));
-    } catch(e){
-      console.error('No se pudo analizar JSON de Drive', e);
+      console.log("Datos cargados correctamente desde Google Drive.");
+    } catch (e) {
+      console.error('No se pudo analizar el JSON de Drive', e);
+      alert('El formato del archivo de reservas en Google Drive es incorrecto.');
     }
-  }, function(error){
-    console.error('Error al leer archivo en Drive', error);
+  }, function(error) {
+    console.error('Error al leer el archivo en Drive', error);
+    alert('No se pudo cargar el archivo de reservas desde Google Drive. Verifique los permisos del archivo y su conexión.');
   });
 }
 
 // Guarda la lista de reservas en el archivo JSON de Drive.
-function saveReservaData(){
-  if(!window.gapi || !gapi.auth2 || !gapi.auth2.getAuthInstance().isSignedIn.get()) return;
-  if(!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
-  const content = JSON.stringify(reservas);
+function saveReservaData() {
+  if (!window.gapi || !gapi.auth2 || !gapi.auth2.getAuthInstance().isSignedIn.get()) return;
+  if (!FILE_ID || FILE_ID.startsWith('REEMPLAZAR')) return;
+  
+  const content = JSON.stringify(reservas, null, 2); // Usamos null, 2 para un formato más legible en el JSON
+  
   gapi.client.request({
     path: '/upload/drive/v3/files/' + FILE_ID,
     method: 'PATCH',
     params: { uploadType: 'media' },
     body: content
-  }).then(function(){
+  }).then(function() {
     console.log('Reservas guardadas en Drive');
-  }, function(error){
+  }, function(error) {
     console.error('Error al guardar en Drive', error);
+    alert('No se pudieron guardar los cambios en Google Drive.');
   });
 }
-const props=['beltran4','beltran8','directorio8'];
-let reservas=JSON.parse(localStorage.getItem('reservas')||'[]');
-let y=new Date().getFullYear(),m=new Date().getMonth();
 
-const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-function monthLabel(){document.getElementById('monthLabel').textContent=monthNames[m]+' '+y;}
-function save(){
-  // Persist to localStorage for offline usage
+// --- FIN DE CÓDIGO MODIFICADO ---
+
+
+const props = ['beltran4', 'beltran8', 'directorio8'];
+let reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
+let y = new Date().getFullYear(), m = new Date().getMonth();
+
+const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+function monthLabel() { document.getElementById('monthLabel').textContent = monthNames[m] + ' ' + y; }
+
+function save() {
+  // Persistir en localStorage para uso sin conexión
   localStorage.setItem('reservas', JSON.stringify(reservas));
-  // If authenticated with Google, also persist to Drive
-  try {
-    saveReservaData();
-  } catch (e) {
-    // ignore errors if API not ready
+  // Si está autenticado con Google, persistir también en Drive
+  saveReservaData();
+}
+
+function genGrid(Y, M) {
+  const first = new Date(Y, M, 1), last = new Date(Y, M + 1, 0);
+  const start = ((first.getDay() + 6) % 7), days = last.getDate(), out = [];
+  let week = Array(7).fill(null), d = 1;
+  for (let i = 0; i < 7; i++) { if (i >= start) week[i] = new Date(Y, M, d++); }
+  out.push(week);
+  while (d <= days) { week = Array(7).fill(null); for (let i = 0; i < 7 && d <= days; i++) week[i] = new Date(Y, M, d++); out.push(week); }
+  while (out.length < 6) out.push(Array(7).fill(null));
+  return out;
+}
+
+function render(prop) {
+  const cont = document.getElementById('cal-' + prop); cont.innerHTML = '';
+  const tbl = document.createElement('table'); tbl.innerHTML = '<thead><tr>' + ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do'].map(d => `<th>${d}</th>`).join('') + '</tr></thead>';
+  const tbody = document.createElement('tbody');
+  genGrid(y, m).forEach(week => {
+    const tr = document.createElement('tr');
+    week.forEach(day => {
+      const td = document.createElement('td');
+      if (day) {
+        td.innerHTML = `<div class="date-number">${day.getDate()}</div>`;
+        const ds = day.toISOString().split('T')[0];
+        reservas.filter(r => r.property === prop && ds >= r.checkIn && ds <= r.checkOut)
+          .forEach(r => {
+            const ev = document.createElement('div');
+            ev.className = `event status-${r.status}`; ev.textContent = `${r.guestName} ${r.numGuests}p $${r.total}`;
+            ev.onclick = e => { e.stopPropagation(); openEdit(r.id); };
+            td.appendChild(ev);
+          });
+        td.onclick = () => openModal({ property: prop, date: ds });
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody); cont.appendChild(tbl);
+}
+
+function renderAll() { props.forEach(render); refreshList(); monthLabel(); }
+
+function switchCalendar(p) {
+  props.forEach(pr => {
+    document.getElementById('cal-' + pr).classList.toggle('hidden', pr !== p);
+    document.getElementById(pr === 'beltran4' ? 'btnBeltran4' : pr === 'beltran8' ? 'btnBeltran8' : 'btnDirectorio8')
+      .classList.toggle('active', pr === p);
+  });
+}
+
+function changeMonth(delta) { m += delta; if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; } renderAll(); }
+
+function refreshList() {
+  const list = document.getElementById('checkList'); list.innerHTML = '';
+  const today = new Date(); today.setHours(0, 0, 0, 0); const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+  [{ lbl: 'Hoy', d: today }, { lbl: 'Mañana', d: tomorrow }].forEach(({ lbl, d }) => {
+    const ds = d.toISOString().split('T')[0]; const sec = document.createElement('div');
+    sec.innerHTML = `<strong>${lbl} (${ds})</strong><br>`;
+    const inArr = reservas.filter(r => r.checkIn === ds), outArr = reservas.filter(r => r.checkOut === ds);
+    if (!inArr.length && !outArr.length) { sec.append('Sin movimientos'); }
+    if (inArr.length) { sec.innerHTML += '<span class="badge badge-success">Check-in</span> ' + inArr.map(r => `${r.guestName} (${r.property})`).join(', ') + '<br>'; }
+    if (outArr.length) { sec.innerHTML += '<span class="badge badge-danger">Check-out</span> ' + outArr.map(r => `${r.guestName} (${r.property})`).join(', '); }
+    list.appendChild(sec);
+  });
+}
+
+function openModal(pref) {
+  document.getElementById('modalOverlay').classList.remove('hidden');
+  document.getElementById('reservationForm').reset(); document.getElementById('reservationId').value = '';
+  document.getElementById('deleteBtn').classList.add('hidden');
+  if (pref) { propertySelect.value = pref.property; checkInDate.value = pref.date; checkOutDate.value = pref.date; }
+  document.getElementById('modalTitle').textContent = 'Nueva reserva';
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.add('hidden'); }
+
+function handleSave() {
+  const id = document.getElementById('reservationId').value || 'res-' + Math.random().toString(36).slice(2);
+  const r = {
+    id,
+    property: propertySelect.value, guestName: guestName.value.trim(),
+    numGuests: +numGuests.value, checkIn: checkInDate.value, checkOut: checkOutDate.value,
+    total: +totalAmount.value, paid: +paidAmount.value, due: +dueAmount.value, status: statusSelect.value
+  };
+  if (!r.guestName || !r.checkIn || !r.checkOut) { alert('Faltan campos obligatorios: Nombre, Ingreso y Egreso.'); return; }
+  if (new Date(r.checkOut) < new Date(r.checkIn)) { alert('La fecha de egreso debe ser igual o posterior a la de ingreso.'); return; }
+  const index = reservas.findIndex(x => x.id === id);
+  if (index > -1) {
+    reservas[index] = r;
+  } else {
+    reservas.push(r);
+  }
+  save(); renderAll(); closeModal();
+}
+
+function openEdit(id) {
+  const r = reservas.find(x => x.id === id); if (!r) return;
+  openModal(); document.getElementById('modalTitle').textContent = 'Editar reserva';
+  propertySelect.value = r.property;
+  guestName.value = r.guestName;
+  numGuests.value = r.numGuests;
+  checkInDate.value = r.checkIn;
+  checkOutDate.value = r.checkOut;
+  totalAmount.value = r.total;
+  paidAmount.value = r.paid;
+  dueAmount.value = r.due;
+  statusSelect.value = r.status;
+  reservationId.value = r.id;
+  document.getElementById('deleteBtn').classList.remove('hidden');
+}
+
+function handleDelete() {
+  const id = document.getElementById('reservationId').value;
+  if (id && confirm('¿Está seguro de que desea eliminar esta reserva?')) {
+    reservas = reservas.filter(r => r.id !== id);
+    save(); renderAll(); closeModal();
   }
 }
 
-function genGrid(Y,M){
- const first=new Date(Y,M,1), last=new Date(Y,M+1,0);
- const start=((first.getDay()+6)%7), days=last.getDate(), out=[];
- let week=Array(7).fill(null),d=1;
- for(let i=0;i<7;i++){if(i>=start)week[i]=new Date(Y,M,d++);}
- out.push(week);
- while(d<=days){week=Array(7).fill(null);for(let i=0;i<7&&d<=days;i++)week[i]=new Date(Y,M,d++);out.push(week);}
- while(out.length<6)out.push(Array(7).fill(null));
- return out;
+function exportData() {
+  if (!reservas.length) { alert('No hay datos para exportar.'); return; }
+  const csv = ['ID,Propiedad,Nombre,Personas,Ingreso,Egreso,Total,Pagado,Pendiente,Estado'];
+  reservas.forEach(r => csv.push([r.id, r.property, r.guestName, r.numGuests, r.checkIn, r.checkOut, r.total, r.paid, r.due, r.status].join(',')));
+  const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'reservas.csv'; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-function render(prop){
- const cont=document.getElementById('cal-'+prop);cont.innerHTML='';
- const tbl=document.createElement('table');tbl.innerHTML='<thead><tr>'+['Lu','Ma','Mi','Ju','Vi','Sa','Do'].map(d=>`<th>${d}</th>`).join('')+'</tr></thead>';
- const tbody=document.createElement('tbody');
- genGrid(y,m).forEach(week=>{
-  const tr=document.createElement('tr');
-  week.forEach(day=>{
-    const td=document.createElement('td');
-    if(day){
-      td.innerHTML=`<div class="date-number">${day.getDate()}</div>`;
-      const ds=day.toISOString().split('T')[0];
-      reservas.filter(r=>r.property===prop&&ds>=r.checkIn&&ds<=r.checkOut)
-      .forEach(r=>{
-        const ev=document.createElement('div');
-        ev.className=`event status-${r.status}`;ev.textContent=`${r.guestName} ${r.numGuests}p $${r.total}`;
-        ev.onclick=e=>{e.stopPropagation();openEdit(r.id);};
-        td.appendChild(ev);
-      });
-      td.onclick=()=>openModal({property:prop,date:ds});
-    }
-    tr.appendChild(td);
-  });
-  tbody.appendChild(tr);
- });
- tbl.appendChild(tbody);cont.appendChild(tbl);
-}
-
-function renderAll(){props.forEach(render);refreshList();monthLabel();}
-function switchCalendar(p){props.forEach(pr=>{
- document.getElementById('cal-'+pr).classList.toggle('hidden',pr!==p);
- document.getElementById(pr==='beltran4'?'btnBeltran4':pr==='beltran8'?'btnBeltran8':'btnDirectorio8')
-   .classList.toggle('active',pr===p);
-});}
-function changeMonth(delta){m+=delta;if(m<0){m=11;y--;}else if(m>11){m=0;y++;}renderAll();}
-function refreshList(){
- const list=document.getElementById('checkList');list.innerHTML='';
- const today=new Date();today.setHours(0,0,0,0);const tomorrow=new Date(today);tomorrow.setDate(tomorrow.getDate()+1);
- [{lbl:'Hoy',d:today},{lbl:'Mañana',d:tomorrow}].forEach(({lbl,d})=>{
-  const ds=d.toISOString().split('T')[0];const sec=document.createElement('div');
-  sec.innerHTML=`<strong>${lbl} (${ds})</strong><br>`;
-  const inArr=reservas.filter(r=>r.checkIn===ds),outArr=reservas.filter(r=>r.checkOut===ds);
-  if(!inArr.length&&!outArr.length){sec.append('Sin movimientos');}
-  if(inArr.length){sec.innerHTML+='<span class="badge badge-success">Check-in</span> '+inArr.map(r=>r.guestName).join(', ')+'<br>';}
-  if(outArr.length){sec.innerHTML+='<span class="badge badge-danger">Check-out</span> '+outArr.map(r=>r.guestName).join(', ');}
-  list.appendChild(sec);
- });
-}
-
-function openModal(pref){document.getElementById('modalOverlay').classList.remove('hidden');
- document.getElementById('reservationForm').reset();document.getElementById('reservationId').value='';
- document.getElementById('deleteBtn').classList.add('hidden');
- if(pref){propertySelect.value=pref.property;checkInDate.value=pref.date;checkOutDate.value=pref.date;}
- document.getElementById('modalTitle').textContent='Nueva reserva';}
-
-function closeModal(){document.getElementById('modalOverlay').classList.add('hidden');}
-
-function handleSave(){
- const id=document.getElementById('reservationId').value||'res-'+Math.random().toString(36).slice(2);
- const r={id,
-  property:propertySelect.value,guestName:guestName.value.trim(),
-  numGuests:+numGuests.value,checkIn:checkInDate.value,checkOut:checkOutDate.value,
-  total:+totalAmount.value,paid:+paidAmount.value,due:+dueAmount.value,status:statusSelect.value};
- if(!r.guestName||!r.checkIn||!r.checkOut){alert('Campos obligatorios faltantes');return;}
- if(new Date(r.checkOut)<new Date(r.checkIn)){alert('Egreso debe ser ≥ ingreso');return;}
- reservas=reservas.filter(x=>x.id!==id);reservas.push(r);save();renderAll();closeModal();
-}
-
-function openEdit(id){
- const r=reservas.find(x=>x.id===id);if(!r)return;
- openModal();document.getElementById('modalTitle').textContent='Editar reserva';
- Object.assign(propertySelect,{value:r.property});guestName.value=r.guestName;numGuests.value=r.numGuests;
- checkInDate.value=r.checkIn;checkOutDate.value=r.checkOut;totalAmount.value=r.total;
- paidAmount.value=r.paid;dueAmount.value=r.due;statusSelect.value=r.status;reservationId.value=r.id;
- document.getElementById('deleteBtn').classList.remove('hidden');
-}
-
-function handleDelete(){
- const id=document.getElementById('reservationId').value;
- if(id&&confirm('¿Eliminar la reserva?')){reservas=reservas.filter(r=>r.id!==id);save();renderAll();closeModal();}
-}
-
-function exportData(){
- if(!reservas.length){alert('No hay datos');return;}
- const csv=['ID,Propiedad,Nombre,Pers,Ingreso,Egreso,Total,Pago,IngresoPend,Estado'];
- reservas.forEach(r=>csv.push([r.id,r.property,r.guestName,r.numGuests,r.checkIn,r.checkOut,r.total,r.paid,r.due,r.status].join(',')));
- const blob=new Blob([csv.join('\n')],{type:'text/csv'});const url=URL.createObjectURL(blob);
- const a=document.createElement('a');a.href=url;a.download='reservas.csv';a.click();URL.revokeObjectURL(url);
-}
-
-window.switchCalendar=switchCalendar;window.openModal=openModal;window.closeModal=closeModal;
-window.handleSave=handleSave;window.handleDelete=handleDelete;window.changeMonth=changeMonth;
-// expose auth handlers globally so buttons can trigger them
+// Exponer funciones al scope global para los `onclick` del HTML
+window.switchCalendar = switchCalendar;
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.handleSave = handleSave;
+window.handleDelete = handleDelete;
+window.changeMonth = changeMonth;
+window.exportData = exportData;
 window.handleAuthClick = handleAuthClick;
 window.handleSignoutClick = handleSignoutClick;
 
-// initialize Google API client on page load
+// Carga inicial
 window.addEventListener('load', handleClientLoad);
-
-monthLabel();renderAll();switchCalendar('beltran4');
+monthLabel();
+renderAll();
+switchCalendar('beltran4');
 </script>
 </body>
 </html>
